@@ -94,37 +94,13 @@ def generate_launch_description():
 
 
     map_server = Node(
-        package='nav2_map_server',
-        executable='map_server',
-        name='map_server',
+        package='articubot_one',
+        executable='custom_map_server',
+        name='custom_map_server',
         output='screen',
-        parameters=[{
-            # 'yaml_filename': '/home/carlios/slam_bot_ws2/src/depth-camera-slam/maps/depth_camera_map2.yaml'
-            'yaml_filename': '/home/carlios/slam_bot_ws2/src/depth-camera-slam/maps/lidar_map2.yaml'
-        }],
     )
     
-    lifecycle_manager = Node(
-            package='nav2_lifecycle_manager',
-            executable='lifecycle_manager',
-            name='lifecycle_manager',
-            output='screen',
-            parameters=[{
-                'use_sim_time': False,
-                'autostart': True,
-                'node_names': ['map_server']
-            }]
-        )
-
-    lifecycle_bringup = Node(
-        package='nav2_util',
-        executable='lifecycle_bringup',
-        name='lifecycle_bringup',
-        output='screen',
-        arguments=['map_server']
-
-
-    )
+  
 
     # Code for delaying a node (I haven't tested how effective it is)
     # 
@@ -155,5 +131,6 @@ def generate_launch_description():
         joint_broad_spawner,
         rviz2,
         depth_image_to_laser_scan,
+        map_server
 
     ])

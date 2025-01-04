@@ -1,10 +1,15 @@
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid, Path
-from geometry_msgs.msg import PoseStamped
+from sensor_msgs.msg import Image
+from geometry_msgs.msg import PoseStamped, TransformStamped
 import numpy as np
 import heapq
-import matplotlib.pyplot as plt
+import cv2
+from cv_bridge import CvBridge
+from math import atan2
+from tf2_ros import TransformListener, Buffer
+
 
 class AStarPathfinder(Node):
     def __init__(self):
@@ -13,16 +18,26 @@ class AStarPathfinder(Node):
         # Subscribe to the map topic
         self.map_sub = self.create_subscription(OccupancyGrid, '/map', self.map_callback, 10)
 
+        # Set up tf2 subscription to get the transformation between odom and base_link
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
         # Publisher to publish the calculated path
         self.path_pub = self.create_publisher(Path, '/path', 10)
+
+        # Publisher to publish the image
+        self.image_pub = self.create_publisher(Image, '/map_image', 10)
 
         self.grid_map = None
         self.map_width = None
         self.map_height = None
         self.resolution = None
         self.origin = None
+        self.robot_position = None  # Store the robot position
+        self.robot_orientation = None  # Store the robot orientation (angle)
 
-        self.get_logger().info('A* Pathfinder Node Started')
+        self.bridge = CvBridge()  # Initialize cv_bridge
+
 
     def map_callback(self, msg):
         """ Callback for receiving the map """
@@ -32,10 +47,12 @@ class AStarPathfinder(Node):
         self.resolution = msg.info.resolution
         self.origin = msg.info.origin.position
 
-        self.get_logger().info('Map received! Starting pathfinding...')
         
-        # Display map directly in the callback (in the main thread)
-        self.display_map()
+        # Get the transform from odom to base_link
+        self.get_robot_transform()
+
+        # Publish the map image with the robot's position, orientation
+        self.publish_map_image()
 
         # Example start and goal positions (you can modify this)
         start = (10, 10)  # Grid coordinates
@@ -49,15 +66,50 @@ class AStarPathfinder(Node):
         else:
             self.get_logger().info('No path found!')
 
-    def display_map(self):
-        """ Display the map using Matplotlib in the main thread """
-        plt.figure(figsize=(10, 10))
-        plt.imshow(self.grid_map, cmap='gray', origin='lower')
-        plt.title('Subscribed Occupancy Grid Map')
-        plt.colorbar(label='Occupancy Value')
-        plt.xlabel('X (grid cells)')
-        plt.ylabel('Y (grid cells)')
-        plt.show()  # This will now be in the main thread
+    def get_robot_transform(self):
+        """ Get the transform between odom and base_link """
+        try:
+            # Get the transform from odom to base_link
+            transform = self.tf_buffer.lookup_transform('odom', 'base_link', rclpy.time.Time())
+            # Extract position and orientation
+            self.robot_position = (transform.transform.translation.x, -transform.transform.translation.y)
+            self.robot_orientation = self.quaternion_to_angle(transform.transform.rotation)
+        except Exception as e:
+            self.get_logger().warn(f"Could not get transform: {e}")
+
+    def quaternion_to_angle(self, quaternion):
+        """ Convert quaternion to yaw (angle in radians) """
+        # Convert quaternion to angle (yaw) using atan2 of the quaternion's z and w components
+        siny_cosp = 2 * (quaternion.w * quaternion.z + quaternion.x * quaternion.y)
+        cosy_cosp = 1 - 2 * (quaternion.y * quaternion.y + quaternion.z * quaternion.z)
+        return atan2(siny_cosp, cosy_cosp)
+
+    def publish_map_image(self):
+        """ Convert the occupancy grid map to an image and publish it with the robot's position and orientation """
+        # Convert the occupancy grid to a color image for visualization
+        image_data = np.uint8(self.grid_map * 255)  # Convert grid to 0-255 values
+        image_data = cv2.cvtColor(image_data, cv2.COLOR_GRAY2BGR)  # Convert to BGR (3 channels)
+
+        if self.robot_position and self.robot_orientation is not None:
+            # Convert the robot position from meters to grid coordinates (pixels)
+            robot_x = int((self.robot_position[0] - self.origin.x) / self.resolution)
+            # robot_y = int((self.map_height + (self.robot_position[1] - self.origin.y)) / self.resolution)
+            robot_y = int((self.robot_position[1] + (self.origin.y) + self.map_height*self.resolution) / self.resolution)
+
+            print(self.map_width, self.map_height)
+            
+            # Draw a red arrow to indicate the robot's orientation
+            arrow_length = 10  # Arrow length in pixels
+            angle = -self.robot_orientation  # Robot's heading in radians
+            end_x = int(robot_x + arrow_length * np.cos(angle))
+            end_y = int(robot_y + arrow_length * np.sin(angle))
+            cv2.arrowedLine(image_data, (robot_x, robot_y), (end_x, end_y), (0, 0, 255), 1, tipLength=0.05)
+
+        # Convert the NumPy array to a ROS Image message
+        ros_image = self.bridge.cv2_to_imgmsg(image_data, encoding="bgr8")
+
+        # Publish the image
+        self.image_pub.publish(ros_image)
 
     def a_star_search(self, start, goal):
         """ A* Algorithm Implementation """
@@ -115,7 +167,6 @@ class AStarPathfinder(Node):
             path_msg.poses.append(pose)
 
         self.path_pub.publish(path_msg)
-        self.get_logger().info('Path published!')
 
 
 def main(args=None):

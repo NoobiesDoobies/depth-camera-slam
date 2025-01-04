@@ -68,7 +68,7 @@ class CustomMapServer(Node):
         # Update the timestamp and publish the map
         self.map_msg.header.stamp = self.get_clock().now().to_msg()
         self.map_pub.publish(self.map_msg)
-        self.get_logger().info('Map published!')
+        # self.get_logger().info('Map published!')
 
 
 def main(args=None):
