@@ -27,6 +27,8 @@ setup(
     entry_points={
         'console_scripts': [
             'depth_to_laser_scan = articubot_one.depth_to_laser_scan:main',
+            'a_star_node = articubot_one.a_star_node:main',
+            'custom_map_server = articubot_one.custom_map_server:main',
         ],
     },
 )
