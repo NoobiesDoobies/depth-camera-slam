@@ -48,6 +48,8 @@ def generate_launch_description():
         # "worlds", "self_made_maze.world"
         # "worlds", "cafe.world"
         "worlds", "furnished_office.world"
+        # "worlds", "furnished_office2.world"
+
     )
     # Include the Gazebo launch file, provided by the gazebo_ros package
     gazebo = IncludeLaunchDescription(
@@ -131,6 +133,6 @@ def generate_launch_description():
         joint_broad_spawner,
         rviz2,
         depth_image_to_laser_scan,
-        map_server
+        # map_server
 
     ])

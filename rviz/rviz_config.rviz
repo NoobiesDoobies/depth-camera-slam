@@ -83,22 +83,21 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Tree:
-        base_link:
-          base_footprint:
-            {}
-          chassis:
-            caster_wheel:
-              {}
-            face_link:
-              {}
-            laser_frame:
-              {}
-          left_wheel:
-            {}
-          right_wheel:
-            {}
         odom:
-          {}
+          base_link:
+            base_footprint:
+              {}
+            chassis:
+              caster_wheel:
+                {}
+              face_link:
+                {}
+              laser_frame:
+                {}
+            left_wheel:
+              {}
+            right_wheel:
+              {}
       Update Interval: 0
       Value: true
     - Alpha: 1

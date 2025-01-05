@@ -45,6 +45,8 @@ class AStarPathfinder(Node):
 
         self.bridge = CvBridge()  # Initialize cv_bridge
 
+        self.robot_width = 26.5/100 # Robot width in m
+
     def goal_pose_callback(self, msg):
         """ Callback for receiving the goal pose """
         self.goal_position = (msg.pose.position.x + self.robot_position[0], -msg.pose.position.y + self.robot_position[1])
@@ -59,9 +61,12 @@ class AStarPathfinder(Node):
         goal = (goal_x, goal_y)
 
         self.path_points = self.a_star_search(start, goal, self.grid_map)
+        # self.path_points = self.dijkstra_search(start, goal, self.grid_map)
+        # self.path_points = self.bfs_search(start, goal, self.grid_map)
 
         print(start_x, start_y)
         print(goal_x, goal_y)
+        print('path points: ', self.path_points)
 
     def map_callback(self, msg):
         """ Callback for receiving the map """
@@ -92,6 +97,9 @@ class AStarPathfinder(Node):
 
         # Publish the map image with the robot's position, orientation, and path
         self.publish_map_image()
+
+        # print unique values in the grid map
+        # print(np.unique(self.grid_map))
 
     def get_robot_transform(self):
         """ Get the transform between odom and base_link """
@@ -139,13 +147,13 @@ class AStarPathfinder(Node):
             end_x = int(robot_x + arrow_length * np.cos(angle))
             end_y = int(robot_y + arrow_length * np.sin(angle))
             # cv2.arrowedLine(image_data, (robot_x, robot_y), (end_x, end_y), (0, 0, 255), 1, tipLength=0.05)
-            cv2.circle(image_data, (robot_x, robot_y), 1, (0, 0, 255), -1)
+            cv2.circle(image_data, (robot_x, robot_y), 2, (0, 0, 255), -1)
 
             goal_x, goal_y = self.convert_real_to_image_coordinate(self.goal_position[0], self.goal_position[1])
             # goal_x = int((self.goal_position[0] - self.origin.x) / self.resolution)
             # goal_y = int((-self.goal_position[1] + self.origin.y + self.map_height*self.resolution) / self.resolution)
 
-            cv2.circle(image_data, (goal_x, goal_y), 1, (0, 255, 0), -1)
+            cv2.circle(image_data, (goal_x, goal_y), 2, (0, 255, 0), -1)
 
         # Draw the path
         if self.path_points:
@@ -163,20 +171,6 @@ class AStarPathfinder(Node):
     def heuristic(self, a, b):
         """ Heuristic function: Manhattan distance """
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
-    
-    def get_neighbors(self, node):
-        """Get neighbors of a node in the grid_map."""
-        neighbors = []
-        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
-
-        for direction in directions:
-            neighbor = (node[0] + direction[0], node[1] + direction[1])
-
-            if 0 <= neighbor[0] < self.grid_map.shape[0] and 0 <= neighbor[1] < self.grid_map.shape[1]:
-                if self.grid_map[neighbor[0]][neighbor[1]] == 0:  # Check if the cell is free
-                    neighbors.append(neighbor)
-
-        return neighbors
     def reconstruct_path(self, came_from, current):
         """Reconstruct path from came_from dictionary."""
         path = [current]
@@ -185,7 +179,40 @@ class AStarPathfinder(Node):
             path.append(current)
         path.reverse()
         return path
-    
+
+    def get_neighbors(self, node, robot_width=8):
+        """Get neighbors of a node in the grid_map with robot width clearance."""
+        neighbors = []
+        directions = [
+            (0, 1), (1, 0), (0, -1), (-1, 0),   # Cardinal directions
+            (1, 1), (-1, -1), (1, -1), (-1, 1)  # Diagonal directions
+        ]
+
+        for direction in directions:
+            neighbor = (node[0] + direction[0], node[1] + direction[1])
+
+            if 0 <= neighbor[1] < self.grid_map.shape[0] and 0 <= neighbor[0] < self.grid_map.shape[1]:
+                # Check if the neighbor has enough clearance
+                if self.has_clearance(neighbor, robot_width):
+                    neighbors.append(neighbor)
+
+        return neighbors
+
+    def has_clearance(self, position, robot_width):
+        """Check if a position has enough clearance for the robot."""
+        x, y = position
+        half_width = robot_width // 2
+
+        for dx in range(-half_width, half_width + 1):
+            for dy in range(-half_width, half_width + 1):
+                nx, ny = x + dx, y + dy
+                if not (0 <= nx < self.grid_map.shape[1] and 0 <= ny < self.grid_map.shape[0]):
+                    return False  # Out of bounds
+                if self.grid_map[ny][nx] != 100:
+                    return False  # Obstacle detected
+
+        return True
+
     def a_star_search(self, start, goal, grid_map):
         """A* search algorithm."""
         open_set = set()
@@ -214,6 +241,65 @@ class AStarPathfinder(Node):
                         open_set.add(neighbor)
 
         return []
+
+    def dijkstra_search(self, start, goal, grid_map):
+        """Dijkstra's algorithm for pathfinding."""
+        open_set = set()
+        open_set.add(start)
+        came_from = {}
+
+        # Initialize g_score with infinity for all cells
+        g_score = {start: 0}
+        
+        # Use a priority queue for the open set
+        pq = []
+        heapq.heappush(pq, (0, start))  # (cost, node)
+
+        while pq:
+            # Get the node with the lowest cost
+            current_cost, current = heapq.heappop(pq)
+
+            # If we reach the goal, reconstruct and return the path
+            if current == goal:
+                return self.reconstruct_path(came_from, current)
+
+            for neighbor in self.get_neighbors(current):
+                tentative_g_score = g_score[current] + 1
+
+                if tentative_g_score < g_score.get(neighbor, float('inf')):
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    heapq.heappush(pq, (tentative_g_score, neighbor))
+
+        return []
+    
+    def bfs_search(self, start, goal, grid_map):
+        """Breadth-First Search (BFS) algorithm for pathfinding."""
+        from collections import deque
+
+        # Check if start or goal is blocked
+        if grid_map[start[1]][start[0]] != 100 or grid_map[goal[1]][goal[0]] != 100:
+            return []
+
+        queue = deque([start])
+        came_from = {}
+        visited = set()
+        visited.add(start)
+
+        while queue:
+            current = queue.popleft()
+
+            if current == goal:
+                return self.reconstruct_path(came_from, current)
+
+            for neighbor in self.get_neighbors(current):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+                    came_from[neighbor] = current
+
+        return [] 
+
     def publish_path(self, path):
         """ Publish the calculated path as a Path message """
         path_msg = Path()

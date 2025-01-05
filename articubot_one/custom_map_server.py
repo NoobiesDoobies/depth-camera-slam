@@ -45,7 +45,7 @@ class CustomMapServer(Node):
         np_image = np.array(image)
 
         # Convert image to occupancy grid
-        occupancy_grid = np.where(np_image > 255 * free_thresh, 0, 100)
+        occupancy_grid = np.where(np_image < (255 * free_thresh), 0, 100)
         occupancy_grid = occupancy_grid.flatten().tolist()
 
         # Create an OccupancyGrid message
