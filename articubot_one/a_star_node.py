@@ -10,6 +10,7 @@ from cv_bridge import CvBridge
 from math import atan2
 from tf2_ros import TransformListener, Buffer
 import random
+import heapq
 
 class AStarPathfinder(Node):
     def __init__(self):
@@ -46,8 +47,21 @@ class AStarPathfinder(Node):
 
     def goal_pose_callback(self, msg):
         """ Callback for receiving the goal pose """
-        self.goal_position = (msg.pose.position.x, msg.pose.position.y)
+        self.goal_position = (msg.pose.position.x + self.robot_position[0], -msg.pose.position.y + self.robot_position[1])
         self.goal_orientation = self.quaternion_to_angle(msg.pose.orientation)
+        
+        start_x, start_y = self.convert_real_to_image_coordinate(self.robot_position[0], self.robot_position[1])
+        start = (start_x, start_y)
+
+
+        goal_x, goal_y = self.convert_real_to_image_coordinate(self.goal_position[0], self.goal_position[1])
+
+        goal = (goal_x, goal_y)
+
+        self.path_points = self.a_star_search(start, goal, self.grid_map)
+
+        print(start_x, start_y)
+        print(goal_x, goal_y)
 
     def map_callback(self, msg):
         """ Callback for receiving the map """
@@ -61,12 +75,20 @@ class AStarPathfinder(Node):
         self.get_robot_transform()
 
         # Run A* Algorithm
-        start = (self.robot_position[0], self.robot_position[1])  # Grid coordinates
-        goal = (self.goal_position[0], self.goal_position[1])  # Grid coordinates
+        start_x, start_y = self.convert_real_to_image_coordinate(self.robot_position[0], self.robot_position[1])
+        start = (start_x, start_y)
 
-        self.path_points = self.a_star_search(start, goal)
 
-        print(self.path_points)
+        goal_x, goal_y = self.convert_real_to_image_coordinate(self.goal_position[0], self.goal_position[1])
+        goal_x += start_x
+        goal_y += start_y
+        goal = (goal_x, goal_y)
+
+
+        # start = (self.robot_position[0], self.robot_position[1])
+        # goal = (self.goal_position[0], self.goal_position[1])
+
+        # self.path_points = self.a_star_search(start, goal, self.grid_map)
 
         # Publish the map image with the robot's position, orientation, and path
         self.publish_map_image()
@@ -116,19 +138,20 @@ class AStarPathfinder(Node):
             angle = -self.robot_orientation  # Robot's heading in radians
             end_x = int(robot_x + arrow_length * np.cos(angle))
             end_y = int(robot_y + arrow_length * np.sin(angle))
-            cv2.arrowedLine(image_data, (robot_x, robot_y), (end_x, end_y), (0, 0, 255), 1, tipLength=0.05)
+            # cv2.arrowedLine(image_data, (robot_x, robot_y), (end_x, end_y), (0, 0, 255), 1, tipLength=0.05)
+            cv2.circle(image_data, (robot_x, robot_y), 1, (0, 0, 255), -1)
 
             goal_x, goal_y = self.convert_real_to_image_coordinate(self.goal_position[0], self.goal_position[1])
-            goal_x = int((self.goal_position[0] - self.origin.x) / self.resolution)
-            goal_y = int((-self.goal_position[1] + self.origin.y + self.map_height*self.resolution) / self.resolution)
+            # goal_x = int((self.goal_position[0] - self.origin.x) / self.resolution)
+            # goal_y = int((-self.goal_position[1] + self.origin.y + self.map_height*self.resolution) / self.resolution)
 
             cv2.circle(image_data, (goal_x, goal_y), 1, (0, 255, 0), -1)
 
         # Draw the path
         if self.path_points:
             for i in range(len(self.path_points) - 1):
-                x1, y1 = self.convert_real_to_image_coordinate(self.path_points[i][0], self.path_points[i][1])
-                x2, y2 = self.convert_real_to_image_coordinate(self.path_points[i + 1][0], self.path_points[i + 1][1])
+                x1, y1 = self.path_points[i][0], self.path_points[i][1]
+                x2, y2 = self.path_points[i + 1][0], self.path_points[i + 1][1]
                 cv2.line(image_data, (x1, y1), (x2, y2), (255, 0, 0), 1)
 
         # Convert the NumPy array to a ROS Image message
@@ -137,57 +160,60 @@ class AStarPathfinder(Node):
         # Publish the image
         self.image_pub.publish(ros_image)
 
-    def a_star_search(self, start, goal):
-        """ A* Algorithm Implementation """
+    def heuristic(self, a, b):
+        """ Heuristic function: Manhattan distance """
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
     
-        # Helper function to calculate heuristic (Manhattan distance)
-        def heuristic(a, b):
-            return abs(a[0] - b[0]) + abs(a[1] - b[1])
+    def get_neighbors(self, node):
+        """Get neighbors of a node in the grid_map."""
+        neighbors = []
+        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
 
-        # Neighbors' directions (right, down, left, up)
-        neighbors = [(0, 1), (1, 0), (0, -1), (-1, 0)]
-        
-        # Open list (priority queue) for A*
-        open_list = []
-        heapq.heappush(open_list, (0 + heuristic(start, goal), 0, start))  # (f, g, (x, y))
-        
-        # Dictionary to store the g score (cost) for each node
-        g_score = {start: 0}
-        
-        # Came from dictionary to reconstruct the path
-        came_from = {}
-        
-        while open_list:
-            current_f, current_g, current = heapq.heappop(open_list)
-            
-            if current == goal:
-                # Reconstruct path
-                path = []
-                while current in came_from:
-                    path.append(current)
-                    current = came_from[current]
-                path.append(start)  # add the start point at the end
-                path.reverse()  # reverse to get the path from start to goal
-                return path
-            
-            for i, j in neighbors:
-                neighbor = (current[0] + i, current[1] + j)
-                
-                # Ensure neighbor is within bounds and check for free space (0)
-                if (0 <= neighbor[0] < self.grid_map.shape[0] and
-                    0 <= neighbor[1] < self.grid_map.shape[1] and
-                    self.grid_map[int(neighbor[0])][int(neighbor[1])] == 0):  # 0 for free space
-                    
-                    tentative_g_score = current_g + 1  # assume each move costs 1
-                    
-                    if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
-                        came_from[neighbor] = current
-                        g_score[neighbor] = tentative_g_score
-                        f_score = tentative_g_score + heuristic(neighbor, goal)
-                        heapq.heappush(open_list, (f_score, tentative_g_score, neighbor))
-        
-        return []  # Return an empty list if no path is found
+        for direction in directions:
+            neighbor = (node[0] + direction[0], node[1] + direction[1])
+
+            if 0 <= neighbor[0] < self.grid_map.shape[0] and 0 <= neighbor[1] < self.grid_map.shape[1]:
+                if self.grid_map[neighbor[0]][neighbor[1]] == 0:  # Check if the cell is free
+                    neighbors.append(neighbor)
+
+        return neighbors
+    def reconstruct_path(self, came_from, current):
+        """Reconstruct path from came_from dictionary."""
+        path = [current]
+        while current in came_from:
+            current = came_from[current]
+            path.append(current)
+        path.reverse()
+        return path
     
+    def a_star_search(self, start, goal, grid_map):
+        """A* search algorithm."""
+        open_set = set()
+        open_set.add(start)
+        came_from = {}
+
+        g_score = {start: 0}
+        f_score = {start: self.heuristic(start, goal)}
+
+        while open_set:
+            current = min(open_set, key=lambda x: f_score.get(x, float('inf')))
+
+            if current == goal:
+                return self.reconstruct_path(came_from, current)
+
+            open_set.remove(current)
+
+            for neighbor in self.get_neighbors(current):
+                tentative_g_score = g_score[current] + 1
+
+                if tentative_g_score < g_score.get(neighbor, float('inf')):
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = g_score[neighbor] + self.heuristic(neighbor, goal)
+                    if neighbor not in open_set:
+                        open_set.add(neighbor)
+
+        return []
     def publish_path(self, path):
         """ Publish the calculated path as a Path message """
         path_msg = Path()
